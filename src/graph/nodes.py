@@ -312,6 +312,31 @@ def planner_node(
         # Normal mode: use full conversation history
         messages = apply_prompt_template("planner", state, configurable, state.get("locale", "en-US"))
 
+    # Inject MongoDB-specific instructions if selected
+    data_sources = configurable.data_sources or []
+    if "mongodb" in data_sources:
+        logger.info("Injecting MongoDB-specific planning instructions.")
+        
+        mongo_instructions = (
+            "CRITICAL: The user has selected MongoDB as a data source. "
+            "You MUST plan for database-centric research steps. "
+            "1. Include steps to analyze the database structure (e.g., 'List files in MongoDB collection', 'Get metadata for collection'). "
+            "2. Use 'Database Research' steps (need_search: true) to query the database. "
+            "3. For large collections, plan to generate multiple specific queries to retrieve relevant chunks and file summaries. "
+            "4. Do NOT rely solely on generic web search if the user asked about data in the database."
+        )
+
+        try:
+            import os
+            schema_path = os.path.join(os.path.dirname(__file__), "..", "prompts", "mongodb_schema.md")
+            with open(schema_path, "r", encoding="utf-8") as f:
+                schema_content = f.read()
+            mongo_instructions += f"\n\n{schema_content}"
+        except Exception as e:
+            logger.error(f"Failed to load MongoDB schema: {e}")
+
+        messages.append(HumanMessage(content=mongo_instructions, name="system"))
+
     if state.get("enable_background_investigation") and state.get(
         "background_investigation_results"
     ):
@@ -1039,7 +1064,7 @@ async def _setup_and_execute_agent_step(
         for tool in all_tools:
             if tool.name in enabled_tools:
                 tool.description = (
-                    f"Powered by '{enabled_tools[tool.name]}'.\n{tool.description}"
+                    f"Powered by '{enabled_tools[tool.name]}.'\n{tool.description}"
                 )
                 loaded_tools.append(tool)
 
@@ -1139,20 +1164,33 @@ async def researcher_node(
 
     # Fallback: If no tools selected but we need to research, maybe default to web search?
     # Or if data_sources was empty initially we already set a default.
-    # If user explicitly deselected everything, tools might be empty.
     
     logger.info(f"[researcher_node] Researcher tools count: {len(tools)}")
     logger.debug(f"[researcher_node] Researcher tools: {[tool.name if hasattr(tool, 'name') else str(tool) for tool in tools]}")
     
     extra_instructions = None
+    if "mongodb" in data_sources:
+        try:
+            import os
+            schema_path = os.path.join(os.path.dirname(__file__), "..", "prompts", "mongodb_schema.md")
+            with open(schema_path, "r", encoding="utf-8") as f:
+                schema_content = f.read()
+            extra_instructions = f"\n\n{schema_content}"
+        except Exception as e:
+            logger.error(f"Failed to load MongoDB schema: {e}")
+
     if not any(source in data_sources for source in ["tavily", "google", "bing", "duckduckgo"]):
-        extra_instructions = (
+        no_web_search_warning = (
             "CRITICAL: You do NOT have access to external web search. "
             "You can ONLY use the provided tools (e.g., local_search_tool) to gather information. "
             "If the tools return no results or fail, you MUST state that you cannot find the information. "
             "DO NOT use your internal knowledge to answer research questions if the tools fail. "
             "DO NOT hallucinate citations or sources."
         )
+        if extra_instructions:
+            extra_instructions += f"\n\n{no_web_search_warning}"
+        else:
+            extra_instructions = no_web_search_warning
 
     return await _setup_and_execute_agent_step(
         state,
@@ -1170,9 +1208,29 @@ async def coder_node(
     logger.info("Coder node is coding.")
     logger.debug(f"[coder_node] Starting coder agent with python_repl_tool")
     
+    configurable = Configuration.from_runnable_config(config)
+    extra_instructions = None
+    
+    # Inject MongoDB context if enabled
+    data_sources = configurable.data_sources or []
+    if "mongodb" in data_sources:
+        mongo_context = (
+            f"## MongoDB Configuration\n"
+            f"You have access to a MongoDB database. Use these details to connect:\n"
+            f"- URI: {configurable.mongodb_uri}\n"
+            f"- Database Name: {configurable.mongodb_db}\n"
+            f"- Collection Name: {configurable.mongodb_collection}\n"
+            f"- Vector Field: {configurable.mongodb_vector_field}\n"
+            f"- Content Field: {configurable.mongodb_content_field}\n\n"
+            f"IMPORTANT: When writing Python code to query MongoDB, ALWAYS use these exact connection details. "
+            f"Do NOT use placeholders like 'your_collection_name'."
+        )
+        extra_instructions = mongo_context
+
     return await _setup_and_execute_agent_step(
         state,
         config,
         "coder",
         [python_repl_tool],
+        extra_instructions,
     )

@@ -22,6 +22,25 @@ def _is_python_repl_enabled() -> bool:
 
 # Initialize REPL and logger
 repl: Optional[PythonREPL] = PythonREPL() if _is_python_repl_enabled() else None
+
+# Inject common modules into REPL globals if enabled
+if repl:
+    import datetime
+    import json
+    import math
+    import random
+    import re
+    
+    # Update globals with common modules
+    repl.globals.update({
+        "datetime": datetime,
+        "json": json,
+        "math": math,
+        "random": random,
+        "re": re,
+        "os": os,
+    })
+
 logger = logging.getLogger(__name__)
 
 

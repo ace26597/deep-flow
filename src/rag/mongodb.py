@@ -86,6 +86,7 @@ class MongoDBRetriever(Retriever):
         try:
             self._connect()
             query_embedding = self._get_embedding(query)
+            vector_index_name = get_str_env("MONGODB_VECTOR_INDEX", "openai_vector_index")
 
             # Determine which collections to query
             collections_to_query = []
@@ -112,55 +113,68 @@ class MongoDBRetriever(Retriever):
             all_documents = {}
 
             for col_name in set(collections_to_query):
-                try:
-                    collection = self.db[col_name]
-                    
-                    # Basic vector search pipeline
-                    pipeline = [
-                        {
-                            "$vectorSearch": {
-                                "index": "vector_index",
-                                "path": self.vector_field,
-                                "queryVector": query_embedding,
-                                "numCandidates": 100,
-                                "limit": 10,
-                            }
-                        },
-                        {
-                            "$project": {
-                                "_id": 1,
-                                self.content_field: 1,
-                                "title": 1,
-                                "source": 1,
-                                "url": 1,
-                                "score": {"$meta": "vectorSearchScore"},
-                            }
-                        },
-                    ]
+                # Query both the main collection (chunks) and the filemeta collection (summaries)
+                target_collections = [col_name, f"{col_name}_filemeta"]
+                
+                for target_col in target_collections:
+                    try:
+                        # Check if collection exists before querying to avoid errors
+                        if target_col not in self.db.list_collection_names():
+                            continue
 
-                    results = list(collection.aggregate(pipeline))
-                    
-                    for res in results:
-                        doc_id = str(res.get("_id"))
-                        content = res.get(self.content_field, "")
-                        title = res.get("title", "Untitled")
-                        url = res.get("url", "")
-                        score = res.get("score", 0.0)
+                        collection = self.db[target_col]
                         
-                        # Use a unique key combining collection and doc_id to avoid collisions
-                        unique_id = f"{col_name}:{doc_id}"
+                        # Basic vector search pipeline
+                        pipeline = [
+                            {
+                                "$vectorSearch": {
+                                    "index": vector_index_name,
+                                    "path": self.vector_field,
+                                    "queryVector": query_embedding,
+                                    "numCandidates": 100,
+                                    "limit": 10,
+                                }
+                            },
+                            {
+                                "$project": {
+                                    "_id": 1,
+                                    self.content_field: 1,
+                                    "title": 1,
+                                    "source": 1,
+                                    "url": 1,
+                                    "score": {"$meta": "vectorSearchScore"},
+                                    # Include summary field if it exists (for filemeta)
+                                    "summary": 1,
+                                    "filename": 1
+                                }
+                            },
+                        ]
 
-                        if unique_id not in all_documents:
-                            all_documents[unique_id] = Document(
-                                id=unique_id, url=url, title=title, chunks=[]
-                            )
+                        results = list(collection.aggregate(pipeline))
                         
-                        chunk = Chunk(content=content, similarity=score)
-                        all_documents[unique_id].chunks.append(chunk)
+                        for res in results:
+                            doc_id = str(res.get("_id"))
+                            # Use summary as content if available (for filemeta), otherwise use content field
+                            content = res.get("summary") or res.get(self.content_field, "")
+                            # Fallback to filename if title is missing
+                            title = res.get("title") or res.get("filename") or "Untitled"
+                            url = res.get("url", "")
+                            score = res.get("score", 0.0)
+                            
+                            # Use a unique key combining collection and doc_id to avoid collisions
+                            unique_id = f"{target_col}:{doc_id}"
 
-                except Exception as e:
-                    logger.exception(f"MongoDB vector search failed for collection {col_name}: {e}")
-                    continue
+                            if unique_id not in all_documents:
+                                all_documents[unique_id] = Document(
+                                    id=unique_id, url=url, title=title, chunks=[]
+                                )
+                            
+                            chunk = Chunk(content=content, similarity=score)
+                            all_documents[unique_id].chunks.append(chunk)
+
+                    except Exception as e:
+                        logger.warning(f"MongoDB vector search failed for collection {target_col}: {e}")
+                        continue
 
             return list(all_documents.values())
 

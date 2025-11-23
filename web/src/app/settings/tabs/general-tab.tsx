@@ -74,7 +74,12 @@ export const GeneralTab: Tab = ({
       }
     }
     if (hasChanges) {
-      onChange({ general: currentSettings });
+      onChange({
+        general: {
+          ...settings.general,
+          ...currentSettings,
+        },
+      });
     }
   }, [currentSettings, onChange, settings]);
 
