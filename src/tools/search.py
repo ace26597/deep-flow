@@ -12,9 +12,11 @@ from langchain_community.tools import (
     WikipediaQueryRun,
 )
 from langchain_community.tools.arxiv import ArxivQueryRun
+from langchain_community.tools.pubmed.tool import PubmedQueryRun
 from langchain_community.utilities import (
     ArxivAPIWrapper,
     BraveSearchWrapper,
+    PubMedAPIWrapper,
     SearxSearchWrapper,
     WikipediaAPIWrapper,
 )
@@ -32,6 +34,7 @@ LoggedTavilySearch = create_logged_tool(TavilySearchWithImages)
 LoggedDuckDuckGoSearch = create_logged_tool(DuckDuckGoSearchResults)
 LoggedBraveSearch = create_logged_tool(BraveSearch)
 LoggedArxivSearch = create_logged_tool(ArxivQueryRun)
+LoggedPubmedSearch = create_logged_tool(PubmedQueryRun)
 LoggedSearxSearch = create_logged_tool(SearxSearchRun)
 LoggedWikipediaSearch = create_logged_tool(WikipediaQueryRun)
 
@@ -117,6 +120,14 @@ def get_web_search_tool(max_search_results: int):
                 top_k_results=max_search_results,
                 load_all_available_meta=True,
                 doc_content_chars_max=wiki_doc_content_chars_max,
+            ),
+        )
+    elif SELECTED_SEARCH_ENGINE == SearchEngine.PUBMED.value:
+        return LoggedPubmedSearch(
+            name="web_search",
+            api_wrapper=PubMedAPIWrapper(
+                top_k_results=max_search_results,
+                email=search_config.get("email", "your_email@example.com"),
             ),
         )
     else:

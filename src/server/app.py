@@ -35,8 +35,6 @@ from src.ppt.graph.builder import build_graph as build_ppt_graph
 from src.prompt_enhancer.graph.builder import build_graph as build_prompt_enhancer_graph
 from src.prose.graph.builder import build_graph as build_prose_graph
 from src.rag.builder import build_retriever
-from src.rag.milvus import load_examples as load_milvus_examples
-from src.rag.qdrant import load_examples as load_qdrant_examples
 from src.rag.retriever import Resource
 from src.server.chat_request import (
     ChatRequest,
@@ -82,7 +80,8 @@ app = FastAPI(
 # Add CORS middleware
 # It's recommended to load the allowed origins from an environment variable
 # for better security and flexibility across different environments.
-allowed_origins_str = get_str_env("ALLOWED_ORIGINS", "http://localhost:3000")
+# Default includes both localhost and 127.0.0.1 to handle different browser behaviors
+allowed_origins_str = get_str_env("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000")
 allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",")]
 
 logger.info(f"Allowed origins: {allowed_origins}")
@@ -94,9 +93,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],  # Use the configured list of methods
     allow_headers=["*"],  # Now allow all headers, but can be restricted further
 )
-# Load examples into RAG providers if configured
-load_milvus_examples()
-load_qdrant_examples()
+
 
 in_memory_store = InMemoryStore()
 graph = build_graph_with_memory()
@@ -138,6 +135,7 @@ async def chat_stream(request: ChatRequest):
             request.max_clarification_rounds,
             request.locale,
             request.interrupt_before_tools,
+            request.data_sources,
         ),
         media_type="text/event-stream",
     )
@@ -515,6 +513,7 @@ async def _astream_workflow_generator(
     max_clarification_rounds: int,
     locale: str = "en-US",
     interrupt_before_tools: Optional[List[str]] = None,
+    data_sources: Optional[List[str]] = None,
 ):
     safe_thread_id = sanitize_thread_id(thread_id)
     safe_feedback = sanitize_log_input(interrupt_feedback) if interrupt_feedback else ""
@@ -589,6 +588,7 @@ async def _astream_workflow_generator(
         "report_style": report_style.value,
         "enable_deep_thinking": enable_deep_thinking,
         "interrupt_before_tools": interrupt_before_tools,
+        "data_sources": data_sources,
         "recursion_limit": get_recursion_limit(),
     }
 

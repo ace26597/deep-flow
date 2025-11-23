@@ -59,7 +59,7 @@ export function MessagesBlock({ className }: { className?: string }) {
             abortSignal: abortController.signal,
           },
         );
-      } catch {}
+      } catch { }
     },
     [feedback],
   );

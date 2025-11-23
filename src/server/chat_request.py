@@ -80,6 +80,9 @@ class ChatRequest(BaseModel):
         default_factory=list,
         description="List of tool names to interrupt before execution (e.g., ['db_tool', 'api_tool'])",
     )
+    data_sources: Optional[List[str]] = Field(
+        None, description="List of data sources to use (e.g., ['tavily', 'mongodb'])"
+    )
 
 
 class TTSRequest(BaseModel):

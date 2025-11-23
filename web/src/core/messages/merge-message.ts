@@ -70,11 +70,21 @@ function mergeToolCallMessage(
   message.toolCalls ??= [];
   for (const chunk of event.data.tool_call_chunks) {
     if (chunk.id) {
-      const toolCall = message.toolCalls.find(
+      let toolCall = message.toolCalls.find(
         (toolCall) => toolCall.id === chunk.id,
       );
-      if (toolCall) {
-        toolCall.argsChunks = [convertToolChunkArgs(chunk.args)];
+      if (!toolCall) {
+        toolCall = {
+          id: chunk.id,
+          name: chunk.name || "",
+          args: {},
+          argsChunks: [],
+        };
+        message.toolCalls.push(toolCall);
+      }
+      toolCall.argsChunks = [convertToolChunkArgs(chunk.args)];
+      if (chunk.name) {
+        toolCall.name = chunk.name;
       }
     } else {
       const streamingToolCall = message.toolCalls.find(

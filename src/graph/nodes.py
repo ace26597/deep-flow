@@ -185,55 +185,102 @@ def background_investigation_node(state: State, config: RunnableConfig):
     query = state.get("clarified_research_topic") or state.get("research_topic")
     background_investigation_results = []
     
-    if SELECTED_SEARCH_ENGINE == SearchEngine.TAVILY.value:
-        searched_content = LoggedTavilySearch(
-            max_results=configurable.max_search_results
-        ).invoke(query)
-        # check if the searched_content is a tuple, then we need to unpack it
-        if isinstance(searched_content, tuple):
-            searched_content = searched_content[0]
-        
-        # Handle string JSON response (new format from fixed Tavily tool)
-        if isinstance(searched_content, str):
-            try:
-                parsed = json.loads(searched_content)
-                if isinstance(parsed, dict) and "error" in parsed:
-                    logger.error(f"Tavily search error: {parsed['error']}")
-                    background_investigation_results = []
-                elif isinstance(parsed, list):
-                    background_investigation_results = [
-                        f"## {elem.get('title', 'Untitled')}\n\n{elem.get('content', 'No content')}" 
-                        for elem in parsed
-                    ]
-                else:
-                    logger.error(f"Unexpected Tavily response format: {searched_content}")
-                    background_investigation_results = []
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse Tavily response as JSON: {searched_content}")
-                background_investigation_results = []
-        # Handle legacy list format
-        elif isinstance(searched_content, list):
-            background_investigation_results = [
-                f"## {elem['title']}\n\n{elem['content']}" for elem in searched_content
-            ]
-            return {
-                "background_investigation_results": "\n\n".join(
-                    background_investigation_results
-                )
-            }
-        else:
-            logger.error(
-                f"Tavily search returned malformed response: {searched_content}"
-            )
-            background_investigation_results = []
-    else:
-        background_investigation_results = get_web_search_tool(
-            configurable.max_search_results
-        ).invoke(query)
     
+    # Determine data sources
+    data_sources = configurable.data_sources
+    if not data_sources:
+        # Fallback to legacy single search engine config
+        data_sources = [SELECTED_SEARCH_ENGINE]
+    
+    logger.info(f"Background investigation using sources: {data_sources}")
+    
+    all_results = []
+    
+    for source in data_sources:
+        source = source.lower()
+        try:
+            if source == SearchEngine.TAVILY.value:
+                searched_content = LoggedTavilySearch(
+                    max_results=configurable.max_search_results
+                ).invoke(query)
+                
+                # Process Tavily results
+                if isinstance(searched_content, tuple):
+                    searched_content = searched_content[0]
+                
+                if isinstance(searched_content, str):
+                    try:
+                        parsed = json.loads(searched_content)
+                        if isinstance(parsed, list):
+                            all_results.extend([
+                                f"## [Tavily] {elem.get('title', 'Untitled')}\n\n{elem.get('content', 'No content')}\n\nSource: {elem.get('url', 'Unknown')}" 
+                                for elem in parsed
+                            ])
+                    except json.JSONDecodeError:
+                        pass
+                elif isinstance(searched_content, list):
+                    all_results.extend([
+                        f"## [Tavily] {elem['title']}\n\n{elem['content']}\n\nSource: {elem['url']}" for elem in searched_content
+                    ])
+
+            elif source == "mongodb":
+                from src.rag.mongodb import MongoDBRetriever
+                retriever = MongoDBRetriever()
+                # Pass selected resources to the retriever
+                docs = retriever.query_relevant_documents(query, resources=config.get("configurable", {}).get("resources", []))
+                all_results.extend([
+                    f"## [MongoDB] {doc.title}\n\n{doc.chunks[0].content if doc.chunks else 'No content'}\n\nSource: {doc.url}" 
+                    for doc in docs
+                ])
+
+            elif source == SearchEngine.PUBMED.value:
+                # PubMed tool returns a string usually
+                pubmed_tool = get_web_search_tool(configurable.max_search_results)
+                # Force PubMed tool if get_web_search_tool doesn't return it (it depends on global config)
+                # So we should instantiate it directly if possible or rely on a helper that takes the engine name
+                # For now, let's instantiate directly to be safe if the global config isn't set to pubmed
+                from langchain_community.tools.pubmed.tool import PubmedQueryRun
+                from langchain_community.utilities import PubMedAPIWrapper
+                from src.tools.search import LoggedPubmedSearch
+                
+                tool = LoggedPubmedSearch(
+                    name="web_search",
+                    api_wrapper=PubMedAPIWrapper(
+                        top_k_results=configurable.max_search_results,
+                        email="your_email@example.com", # Should be from config
+                    ),
+                )
+                res = tool.invoke(query)
+                all_results.append(f"## [PubMed] Results\n\n{res}")
+
+            elif source == SearchEngine.ARXIV.value:
+                from langchain_community.tools.arxiv import ArxivQueryRun
+                from langchain_community.utilities import ArxivAPIWrapper
+                from src.tools.search import LoggedArxivSearch
+                
+                tool = LoggedArxivSearch(
+                    name="web_search",
+                    api_wrapper=ArxivAPIWrapper(
+                        top_k_results=configurable.max_search_results,
+                        load_max_docs=configurable.max_search_results,
+                        load_all_available_meta=True,
+                    ),
+                )
+                res = tool.invoke(query)
+                all_results.append(f"## [Arxiv] Results\n\n{res}")
+                
+            else:
+                # Fallback for other engines if they are the selected one
+                if source == SELECTED_SEARCH_ENGINE:
+                    res = get_web_search_tool(configurable.max_search_results).invoke(query)
+                    all_results.append(f"## [{source.title()}] Results\n\n{res}")
+
+        except Exception as e:
+            logger.error(f"Error querying source {source}: {e}")
+
     return {
         "background_investigation_results": json.dumps(
-            background_investigation_results, ensure_ascii=False
+            all_results, ensure_ascii=False
         )
     }
 
@@ -770,7 +817,7 @@ def research_team_node(state: State):
 
 
 async def _execute_agent_step(
-    state: State, agent, agent_name: str
+    state: State, agent, agent_name: str, extra_instructions: str = None
 ) -> Command[Literal["research_team"]]:
     """Helper function to execute a step using the specified agent."""
     logger.debug(f"[_execute_agent_step] Starting execution for agent: {agent_name}")
@@ -838,6 +885,11 @@ async def _execute_agent_step(
                 content="IMPORTANT: DO NOT include inline citations in the text. Instead, track all sources and include a References section at the end using link reference format. Include an empty line between each citation for better readability. Use this format for each reference:\n- [Source Title](URL)\n\n- [Another Source](URL)",
                 name="system",
             )
+        )
+
+    if extra_instructions:
+        agent_input["messages"].append(
+            HumanMessage(content=extra_instructions, name="system")
         )
 
     # Invoke the agent
@@ -942,6 +994,7 @@ async def _setup_and_execute_agent_step(
     config: RunnableConfig,
     agent_type: str,
     default_tools: list,
+    extra_instructions: str = None,
 ) -> Command[Literal["research_team"]]:
     """Helper function to set up an agent with appropriate tools and execute a step.
 
@@ -1000,7 +1053,7 @@ async def _setup_and_execute_agent_step(
             pre_model_hook,
             interrupt_before_tools=configurable.interrupt_before_tools,
         )
-        return await _execute_agent_step(state, agent, agent_type)
+        return await _execute_agent_step(state, agent, agent_type, extra_instructions)
     else:
         # Use default tools if no MCP servers are configured
         llm_token_limit = get_llm_token_limit_by_type(AGENT_LLM_MAP[agent_type])
@@ -1013,7 +1066,7 @@ async def _setup_and_execute_agent_step(
             pre_model_hook,
             interrupt_before_tools=configurable.interrupt_before_tools,
         )
-        return await _execute_agent_step(state, agent, agent_type)
+        return await _execute_agent_step(state, agent, agent_type, extra_instructions)
 
 
 async def researcher_node(
@@ -1026,20 +1079,87 @@ async def researcher_node(
     configurable = Configuration.from_runnable_config(config)
     logger.debug(f"[researcher_node] Max search results: {configurable.max_search_results}")
     
-    tools = [get_web_search_tool(configurable.max_search_results), crawl_tool]
-    retriever_tool = get_retriever_tool(state.get("resources", []))
-    if retriever_tool:
-        logger.debug(f"[researcher_node] Adding retriever tool to tools list")
-        tools.insert(0, retriever_tool)
+    # Determine data sources
+    data_sources = configurable.data_sources
+    if not data_sources:
+        # Fallback to legacy behavior (use default web search)
+        data_sources = ["tavily"] # Default to tavily if not specified, or use SELECTED_SEARCH_ENGINE logic if preferred
+        # But better to check if we should default to SELECTED_SEARCH_ENGINE
+        if SELECTED_SEARCH_ENGINE:
+             data_sources = [SELECTED_SEARCH_ENGINE]
+
+    tools = []
+    
+    # 1. Web Search (Tavily/Google/etc)
+    # We map 'tavily' to the generic web search tool for now
+    if "tavily" in data_sources or "google" in data_sources or "bing" in data_sources or "duckduckgo" in data_sources:
+        tools.append(get_web_search_tool(configurable.max_search_results))
+        tools.append(crawl_tool)
+        
+    # 2. MongoDB / RAG
+    # Only add retriever if 'mongodb' is in data sources AND resources are available
+    if "mongodb" in data_sources:
+        retriever_tool = get_retriever_tool(state.get("resources", []))
+        if retriever_tool:
+            logger.debug(f"[researcher_node] Adding retriever tool to tools list")
+            tools.append(retriever_tool)
+
+    # 3. PubMed
+    if "pubmed" in data_sources:
+        try:
+            from langchain_community.utilities import PubMedAPIWrapper
+            from src.tools.search import LoggedPubmedSearch
+            
+            tools.append(LoggedPubmedSearch(
+                name="pubmed_search",
+                api_wrapper=PubMedAPIWrapper(
+                    top_k_results=configurable.max_search_results,
+                    email="your_email@example.com", 
+                ),
+            ))
+        except ImportError:
+            logger.error("Failed to import PubMed tools")
+
+    # 4. Arxiv
+    if "arxiv" in data_sources:
+        try:
+            from langchain_community.utilities import ArxivAPIWrapper
+            from src.tools.search import LoggedArxivSearch
+            
+            tools.append(LoggedArxivSearch(
+                name="arxiv_search",
+                api_wrapper=ArxivAPIWrapper(
+                    top_k_results=configurable.max_search_results,
+                    load_max_docs=configurable.max_search_results,
+                    load_all_available_meta=True,
+                ),
+            ))
+        except ImportError:
+            logger.error("Failed to import Arxiv tools")
+
+    # Fallback: If no tools selected but we need to research, maybe default to web search?
+    # Or if data_sources was empty initially we already set a default.
+    # If user explicitly deselected everything, tools might be empty.
     
     logger.info(f"[researcher_node] Researcher tools count: {len(tools)}")
     logger.debug(f"[researcher_node] Researcher tools: {[tool.name if hasattr(tool, 'name') else str(tool) for tool in tools]}")
     
+    extra_instructions = None
+    if not any(source in data_sources for source in ["tavily", "google", "bing", "duckduckgo"]):
+        extra_instructions = (
+            "CRITICAL: You do NOT have access to external web search. "
+            "You can ONLY use the provided tools (e.g., local_search_tool) to gather information. "
+            "If the tools return no results or fail, you MUST state that you cannot find the information. "
+            "DO NOT use your internal knowledge to answer research questions if the tools fail. "
+            "DO NOT hallucinate citations or sources."
+        )
+
     return await _setup_and_execute_agent_step(
         state,
         config,
         "researcher",
         tools,
+        extra_instructions,
     )
 
 

@@ -18,7 +18,9 @@ export async function* fetchStream(
     ...init,
   });
   if (response.status !== 200) {
-    throw new Error(`Failed to fetch from ${url}: ${response.status}`);
+    const errorText = await response.text().catch(() => "No error details available");
+    console.error(`[FetchStream] HTTP ${response.status} from ${url}:`, errorText);
+    throw new Error(`Failed to fetch from ${url}: HTTP ${response.status} - ${errorText.substring(0, 200)}`);
   }
   // Read from response body, event by event. An event always ends with a '\n\n'.
   const reader = response.body

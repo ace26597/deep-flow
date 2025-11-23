@@ -46,18 +46,18 @@ export function ResearchActivitiesBlock({
     state.researchActivityIds.get(researchId),
   )!;
   const ongoing = useStore((state) => state.ongoingResearchId === researchId);
-  
+
   return (
     <>
       <ul className={cn("flex flex-col py-4", className)}>
         {activityIds.map(
           (activityId, i) => {
             if (i === 0) return null;
-            
+
             // Performance optimization: limit animations for large lists
             const shouldAnimate = i < MAX_ANIMATED_ITEMS;
             const animationDelay = shouldAnimate ? Math.min(i * ANIMATION_DELAY_MULTIPLIER, 0.5) : 0;
-            
+
             return (
               <motion.li
                 key={activityId}
@@ -148,7 +148,7 @@ function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
   const searchResults = useMemo<SearchResult[]>(() => {
     let results: SearchResult[] | undefined = undefined;
     let parseError = false;
-    
+
     try {
       if (toolCall.result) {
         results = parseJSON(toolCall.result, []);
@@ -158,7 +158,7 @@ function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
       console.warn("Failed to parse search results:", error);
       results = undefined;
     }
-    
+
     if (Array.isArray(results)) {
       results.forEach((result) => {
         if (result.type === "page") {
@@ -169,7 +169,7 @@ function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
       // If parsing failed, still try to show something useful
       results = [];
     }
-    
+
     return results;
   }, [toolCall.result]);
   const pageResults = useMemo(
@@ -251,21 +251,21 @@ function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                       delay: Math.min(i * 0.05, 0.2),
                       ease: "easeOut",
                     } : undefined}
-              >
-                <a
-                  className="flex flex-col gap-2 overflow-hidden rounded-md opacity-75 transition-opacity duration-300 hover:opacity-100"
-                  href={searchResult.image_url}
-                  target="_blank"
-                >
-                  <Image
-                    src={searchResult.image_url}
-                    alt={searchResult.image_description}
-                    className="bg-accent h-40 w-40 max-w-full rounded-md bg-cover bg-center bg-no-repeat"
-                    imageClassName="hover:scale-110"
-                    imageTransition
-                  />
-                </a>
-              </motion.li>
+                  >
+                    <a
+                      className="flex flex-col gap-2 overflow-hidden rounded-md opacity-75 transition-opacity duration-300 hover:opacity-100"
+                      href={searchResult.image_url}
+                      target="_blank"
+                    >
+                      <Image
+                        src={searchResult.image_url}
+                        alt={searchResult.image_description}
+                        className="bg-accent h-40 w-40 max-w-full rounded-md bg-cover bg-center bg-no-repeat"
+                        imageClassName="hover:scale-110"
+                        imageTransition
+                      />
+                    </a>
+                  </motion.li>
                 );
               })}
           </ul>
@@ -325,7 +325,12 @@ function RetrieverToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
   const documents = useMemo<
     Array<{ id: string; title: string; content: string }>
   >(() => {
-    return toolCall.result ? parseJSON(toolCall.result, []) : [];
+    try {
+      return toolCall.result ? parseJSON(toolCall.result, []) : [];
+    } catch (error) {
+      console.error("Failed to parse retriever tool result:", error);
+      return [];
+    }
   }, [toolCall.result]);
   return (
     <section className="mt-4 pl-4">

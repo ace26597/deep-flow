@@ -18,6 +18,8 @@ const DEFAULT_SETTINGS: SettingsState = {
     maxStepNum: 3,
     maxSearchResults: 3,
     reportStyle: "academic",
+    dataSources: ["tavily"],
+    selectedResources: [],
   },
   mcp: {
     servers: [],
@@ -35,6 +37,8 @@ export type SettingsState = {
     maxStepNum: number;
     maxSearchResults: number;
     reportStyle: "academic" | "popular_science" | "news" | "social_media" | "strategic_investment";
+    dataSources: string[];
+    selectedResources: string[];
   };
   mcp: {
     servers: MCPServerMetadata[];
@@ -84,14 +88,14 @@ export const saveSettings = () => {
 export const getChatStreamSettings = () => {
   let mcpSettings:
     | {
-        servers: Record<
-          string,
-          MCPServerMetadata & {
-            enabled_tools: string[];
-            add_to_agents: string[];
-          }
-        >;
-      }
+      servers: Record<
+        string,
+        MCPServerMetadata & {
+          enabled_tools: string[];
+          add_to_agents: string[];
+        }
+      >;
+    }
     | undefined = undefined;
   const { mcp, general } = useSettingsStore.getState();
   const mcpServers = mcp.servers.filter((server) => server.enabled);
@@ -170,6 +174,26 @@ export function setEnableClarification(value: boolean) {
     general: {
       ...state.general,
       enableClarification: value,
+    },
+  }));
+  saveSettings();
+}
+
+export function setDataSources(value: string[]) {
+  useSettingsStore.setState((state) => ({
+    general: {
+      ...state.general,
+      dataSources: value,
+    },
+  }));
+  saveSettings();
+}
+
+export function setSelectedResources(value: string[]) {
+  useSettingsStore.setState((state) => ({
+    general: {
+      ...state.general,
+      selectedResources: value,
     },
   }));
   saveSettings();

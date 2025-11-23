@@ -57,6 +57,17 @@ class Configuration:
     interrupt_before_tools: list[str] = field(
         default_factory=list
     )  # List of tool names to interrupt before execution
+    
+    # MongoDB Configuration
+    mongodb_uri: str = None
+    mongodb_db: str = None
+    mongodb_collection: str = None
+    mongodb_file_meta_collection: str = "_filemeta"
+    mongodb_vector_field: str = "embedding"
+    mongodb_content_field: str = "text"
+
+    # Data Sources
+    data_sources: list[str] = field(default_factory=list)
 
     @classmethod
     def from_runnable_config(

@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { GithubFilled } from "@ant-design/icons";
+
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from 'next-intl';
@@ -14,7 +14,7 @@ import { env } from "~/env";
 export function Jumbotron() {
   const t = useTranslations('hero');
   const tCommon = useTranslations('common');
-  
+
   return (
     <section className="flex h-[95vh] w-full flex-col items-center justify-center pb-15">
       <FlickeringGrid
@@ -60,22 +60,7 @@ export function Jumbotron() {
               {tCommon('getStarted')} <ChevronRight />
             </Link>
           </Button>
-          {!env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY && (
-            <Button
-              className="w-42 text-lg"
-              size="lg"
-              variant="outline"
-              asChild
-            >
-              <Link
-                href="https://github.com/bytedance/deer-flow"
-                target="_blank"
-              >
-                <GithubFilled />
-                {tCommon('learnMore')}
-              </Link>
-            </Button>
-          )}
+
         </div>
       </div>
       <div className="absolute bottom-8 flex text-xs opacity-50">

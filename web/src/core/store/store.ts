@@ -120,6 +120,7 @@ export async function sendMessage(
       max_search_results: settings.maxSearchResults,
       report_style: settings.reportStyle,
       mcp_settings: settings.mcpSettings,
+      data_sources: settings.dataSources,
     },
     options,
   );
@@ -144,7 +145,7 @@ export async function sendMessage(
     for await (const event of stream) {
       const { type, data } = event;
       let message: Message | undefined;
-      
+
       // Handle tool_call_result specially: use the message that contains the tool call
       if (type === "tool_call_result") {
         message = findMessageByToolCallId(data.tool_call_id);
@@ -161,7 +162,7 @@ export async function sendMessage(
       } else {
         // For other event types, use data.id
         messageId = data.id;
-        
+
         if (!existsMessage(messageId)) {
           message = {
             id: messageId,
@@ -178,7 +179,7 @@ export async function sendMessage(
           appendMessage(message);
         }
       }
-      
+
       message ??= getMessage(messageId);
       if (message) {
         message = mergeMessage(message, event);
@@ -413,7 +414,7 @@ export function useRenderableMessageIds() {
       return state.messageIds.filter((messageId) => {
         const message = state.messages.get(messageId);
         if (!message) return false;
-        
+
         // Only include messages that match MessageListItem rendering conditions
         // These are the same conditions checked in MessageListItem component
         return (

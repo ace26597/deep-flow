@@ -15,7 +15,7 @@ import { env } from "~/env";
 import { Toaster } from "../components/deer-flow/toaster";
 
 export const metadata: Metadata = {
-  title: "🦌 DeerFlow",
+  title: "DeepFlow",
   description:
     "Deep Exploration and Efficient Research, an AI tool that combines language models with specialized tools for research tasks.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
@@ -31,7 +31,7 @@ export default async function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   const locale = await getLocale();
   const messages = await getMessages();
-  
+
   return (
     <html lang={locale} className={`${geist.variable}`} suppressHydrationWarning>
       <head>

@@ -39,7 +39,7 @@ class RetrieverTool(BaseTool):
         )
         documents = self.retriever.query_relevant_documents(keywords, self.resources)
         if not documents:
-            return "No results found from the local knowledge base."
+            return []
         return [doc.to_dict() for doc in documents]
 
     async def _arun(

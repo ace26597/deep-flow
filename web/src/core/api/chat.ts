@@ -14,15 +14,15 @@ import type { ChatEvent } from "./types";
 
 function getLocaleFromCookie(): string {
   if (typeof document === "undefined") return "en-US";
-  
+
   // Map frontend locale codes to backend locale format
   // Frontend uses: "en", "zh"
   // Backend expects: "en-US", "zh-CN"
   const LOCALE_MAP = { "en": "en-US", "zh": "zh-CN" } as const;
-  
+
   // Initialize to raw locale format (matches cookie format)
   let rawLocale = "en";
-  
+
   // Read from cookie
   const cookies = document.cookie.split(";");
   for (const cookie of cookies) {
@@ -32,7 +32,7 @@ function getLocaleFromCookie(): string {
       break;
     }
   }
-  
+
   // Map raw locale to backend format, fallback to en-US if unmapped
   return LOCALE_MAP[rawLocale as keyof typeof LOCALE_MAP] ?? "en-US";
 }
@@ -52,6 +52,7 @@ export async function* chatStream(
     enable_deep_thinking?: boolean;
     enable_background_investigation: boolean;
     report_style?: "academic" | "popular_science" | "news" | "social_media" | "strategic_investment";
+    data_sources?: string[];
     mcp_settings?: {
       servers: Record<
         string,
@@ -68,12 +69,14 @@ export async function* chatStream(
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY ||
     location.search.includes("mock") ||
     location.search.includes("replay=")
-  ) 
+  )
     return yield* chatReplayStream(userMessage, params, options);
-  
-  try{
+
+  try {
     const locale = getLocaleFromCookie();
-    const stream = fetchStream(resolveServiceURL("chat/stream"), {
+    const apiUrl = resolveServiceURL("chat/stream");
+    console.log("[Chat] Connecting to:", apiUrl);
+    const stream = fetchStream(apiUrl, {
       body: JSON.stringify({
         messages: [{ role: "user", content: userMessage }],
         locale,
@@ -81,15 +84,19 @@ export async function* chatStream(
       }),
       signal: options.abortSignal,
     });
-    
+
     for await (const event of stream) {
       yield {
         type: event.event,
         data: JSON.parse(event.data),
       } as ChatEvent;
     }
-  }catch(e){
-    console.error(e);
+  } catch (e) {
+    const error = e instanceof Error ? e : new Error(String(e));
+    console.error("[Chat] Error connecting to backend:", error.message);
+    console.error("[Chat] Full error:", e);
+    // Re-throw to allow proper error handling upstream
+    throw error;
   }
 }
 
@@ -103,13 +110,13 @@ async function* chatReplayStream(
     max_search_results?: number;
     interrupt_feedback?: string;
   } = {
-    thread_id: "__mock__",
-    auto_accepted_plan: false,
-    max_plan_iterations: 3,
-    max_step_num: 1,
-    max_search_results: 3,
-    interrupt_feedback: undefined,
-  },
+      thread_id: "__mock__",
+      auto_accepted_plan: false,
+      max_plan_iterations: 3,
+      max_step_num: 1,
+      max_search_results: 3,
+      interrupt_feedback: undefined,
+    },
   options: { abortSignal?: AbortSignal } = {},
 ): AsyncIterable<ChatEvent> {
   const urlParams = new URLSearchParams(window.location.search);

@@ -42,7 +42,7 @@ const generalFormSchema = z.object({
   // Others
   enableBackgroundInvestigation: z.boolean(),
   enableDeepThinking: z.boolean(),
-  reportStyle: z.enum(["academic", "popular_science", "news", "social_media","strategic_investment"]),
+  reportStyle: z.enum(["academic", "popular_science", "news", "social_media", "strategic_investment"]),
 });
 
 export const GeneralTab: Tab = ({
@@ -205,15 +205,6 @@ export const GeneralTab: Tab = ({
                 <FormItem>
                   <FormLabel>{t("maxSearchResults")}</FormLabel>
                   <FormControl>
-                    <Input
-                      className="w-60"
-                      type="number"
-                      defaultValue={field.value}
-                      min={1}
-                      onChange={(event) =>
-                        field.onChange(parseInt(event.target.value || "0"))
-                      }
-                    />
                   </FormControl>
                   <FormDescription>
                     {t("maxSearchResultsDescription")}
@@ -222,6 +213,7 @@ export const GeneralTab: Tab = ({
                 </FormItem>
               )}
             />
+
           </form>
         </Form>
       </main>

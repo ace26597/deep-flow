@@ -25,6 +25,8 @@ import {
 } from "~/core/store";
 import { cn } from "~/lib/utils";
 
+import { DataSourceSelector } from "./data-source-selector";
+
 export function InputBox({
   className,
   responding,
@@ -66,6 +68,10 @@ export function InputBox({
   const [isEnhanceAnimating, setIsEnhanceAnimating] = useState(false);
   const [currentPrompt, setCurrentPrompt] = useState("");
 
+  const selectedResources = useSettingsStore(
+    (state) => state.general.selectedResources || [],
+  );
+
   const handleSendMessage = useCallback(
     (message: string, resources: Array<Resource>) => {
       if (responding) {
@@ -75,9 +81,20 @@ export function InputBox({
           return;
         }
         if (onSend) {
+          // Convert selectedResources strings to Resource objects if needed
+          // But wait, onSend expects Array<Resource>.
+          // The backend expects resources to be passed.
+          // Let's construct Resource objects from selectedResources URIs.
+          // We don't have titles here easily, but URI is what matters for backend query.
+          const extraResources: Resource[] = selectedResources.map(uri => ({
+            uri,
+            title: uri.split('/').pop() || 'Resource',
+            description: 'Selected Resource'
+          }));
+
           onSend(message, {
             interruptFeedback: feedback?.option.value,
-            resources,
+            resources: [...resources, ...extraResources],
           });
           onRemoveFeedback?.();
           // Clear enhancement animation after sending
@@ -85,7 +102,7 @@ export function InputBox({
         }
       }
     },
-    [responding, onCancel, onSend, feedback, onRemoveFeedback],
+    [responding, onCancel, onSend, feedback, onRemoveFeedback, selectedResources],
   );
 
   const handleEnhancePrompt = useCallback(async () => {
@@ -273,6 +290,7 @@ export function InputBox({
               <Detective /> {t("investigation")}
             </Button>
           </Tooltip>
+          <DataSourceSelector />
           <ReportStyleDialog />
         </div>
         <div className="flex shrink-0 items-center gap-2">
