@@ -12,14 +12,13 @@ Required environment variables:
 - NCBI_API_KEY: Optional API key for higher rate limits (recommended)
 """
 
-import json
 import logging
 import os
 import time
-from typing import List, Optional
-from urllib.parse import urlencode
-from urllib.request import urlopen
+import xml.etree.ElementTree as ET
+from typing import Dict, List, Optional
 
+import httpx
 from langchain_core.tools import BaseTool
 from pydantic import Field
 
@@ -28,9 +27,9 @@ logger = logging.getLogger(__name__)
 # NCBI E-utilities base URL
 EUTILS_BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
-# Rate limiting: 3 requests per second without API key, 10 per second with API key
-# We'll be conservative and use 0.35 seconds between requests
-REQUEST_DELAY = 0.35
+# Default rate limiting per NCBI guidelines (requests / second)
+DEFAULT_DELAY_SECONDS = 0.35  # ~3 req/sec
+API_KEY_DELAY_SECONDS = 0.12  # ~8-10 req/sec (with api_key)
 
 
 class PubMedSearchTool(BaseTool):
@@ -50,6 +49,7 @@ class PubMedSearchTool(BaseTool):
     max_results: int = Field(default=10, description="Maximum number of results to return")
     email: Optional[str] = Field(default=None, description="Email address for NCBI API (required for high-volume usage)")
     api_key: Optional[str] = Field(default=None, description="NCBI API key for higher rate limits")
+    tool_name: str = Field(default="deerflow_pubmed", description="NCBI API 'tool' identifier")
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -64,6 +64,42 @@ class PubMedSearchTool(BaseTool):
                 "PUBMED_EMAIL not set. NCBI recommends providing an email address "
                 "for high-volume usage. Set PUBMED_EMAIL environment variable."
             )
+        self._request_delay = API_KEY_DELAY_SECONDS if self.api_key else DEFAULT_DELAY_SECONDS
+    
+    def _make_params(self, overrides: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        params: Dict[str, str] = {
+            "db": "pubmed",
+            "tool": self.tool_name,
+        }
+        if self.email:
+            params["email"] = self.email
+        if self.api_key:
+            params["api_key"] = self.api_key
+        if overrides:
+            params.update(overrides)
+        return params
+    
+    def _request_json(self, endpoint: str, params: Dict[str, str]) -> Dict:
+        url = f"{EUTILS_BASE_URL}/{endpoint}"
+        final_params = self._make_params(params)
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                response = client.get(url, params=final_params)
+                response.raise_for_status()
+                return response.json()
+        finally:
+            time.sleep(self._request_delay)
+
+    def _request_text(self, endpoint: str, params: Dict[str, str]) -> str:
+        url = f"{EUTILS_BASE_URL}/{endpoint}"
+        final_params = self._make_params(params)
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                response = client.get(url, params=final_params)
+                response.raise_for_status()
+                return response.text
+        finally:
+            time.sleep(self._request_delay)
     
     def _esearch(self, query: str, retmax: int = 100) -> List[str]:
         """
@@ -77,39 +113,24 @@ class PubMedSearchTool(BaseTool):
             List of PMIDs (as strings)
         """
         params = {
-            "db": "pubmed",
             "term": query,
-            "retmax": retmax,
+            "retmax": min(retmax, 200),
             "retmode": "json",
-            "usehistory": "y",  # Use history for efficient batch retrieval
+            "usehistory": "y",
         }
         
-        if self.email:
-            params["email"] = self.email
-        if self.api_key:
-            params["api_key"] = self.api_key
-        
-        url = f"{EUTILS_BASE_URL}/esearch.fcgi?{urlencode(params)}"
-        
-            try:
-                logger.debug(f"ESearch request: {url}")
-                with urlopen(url) as response:
-                    data = response.read().decode("utf-8")
-                    result = json.loads(data)
-                
-                if "esearchresult" in result:
-                    pmids = result["esearchresult"].get("idlist", [])
-                    logger.info(f"ESearch found {len(pmids)} articles for query: {query}")
-                    return pmids
-                else:
-                    logger.warning(f"Unexpected ESearch response structure: {result}")
-                    return []
+        try:
+            logger.debug("ESearch params: %s", params)
+            result = self._request_json("esearch.fcgi", params)
+            if "esearchresult" in result:
+                pmids = result["esearchresult"].get("idlist", [])
+                logger.info("ESearch found %d articles for query: %s", len(pmids), query)
+                return pmids
+            logger.warning("Unexpected ESearch response structure: %s", result)
+            return []
         except Exception as e:
             logger.error(f"Error in ESearch: {e}")
             return []
-        finally:
-            # Rate limiting
-            time.sleep(REQUEST_DELAY)
     
     def _esummary(self, pmids: List[str]) -> List[dict]:
         """
@@ -130,43 +151,72 @@ class PubMedSearchTool(BaseTool):
         
         for i in range(0, len(pmids), batch_size):
             batch_pmids = pmids[i:i + batch_size]
-            id_string = ",".join(batch_pmids)
-            
             params = {
-                "db": "pubmed",
-                "id": id_string,
+                "id": ",".join(batch_pmids),
                 "retmode": "json",
+                "version": "2.0",
             }
             
-            if self.email:
-                params["email"] = self.email
-            if self.api_key:
-                params["api_key"] = self.api_key
-            
-            url = f"{EUTILS_BASE_URL}/esummary.fcgi?{urlencode(params)}"
-            
             try:
-                logger.debug(f"ESummary request for {len(batch_pmids)} articles")
-                with urlopen(url) as response:
-                    data = response.read().decode("utf-8")
-                    result = json.loads(data)
-                    
-                    if "result" in result:
-                        # ESummary returns a dict keyed by PMID
-                        summaries = []
-                        for pmid in batch_pmids:
-                            if pmid in result["result"]:
-                                summaries.append(result["result"][pmid])
-                        all_summaries.extend(summaries)
-                    else:
-                        logger.warning(f"Unexpected ESummary response structure")
+                logger.debug("ESummary request for %d PMIDs", len(batch_pmids))
+                result = self._request_json("esummary.fcgi", params)
+                if "result" in result:
+                    summaries = []
+                    for pmid in batch_pmids:
+                        if pmid in result["result"]:
+                            summaries.append(result["result"][pmid])
+                    all_summaries.extend(summaries)
+                else:
+                    logger.warning("Unexpected ESummary response structure")
             except Exception as e:
-                logger.error(f"Error in ESummary: {e}")
-            finally:
-                # Rate limiting
-                time.sleep(REQUEST_DELAY)
+                logger.error("Error in ESummary: %s", e)
         
         return all_summaries
+    
+    def _efetch_abstracts(self, pmids: List[str]) -> Dict[str, str]:
+        """
+        Retrieve abstracts via EFetch (XML) to supplement ESummary output.
+        """
+        if not pmids:
+            return {}
+        
+        params = {
+            "id": ",".join(pmids),
+            "retmode": "xml",
+            "rettype": "abstract",
+        }
+        
+        try:
+            xml_text = self._request_text("efetch.fcgi", params)
+        except Exception as exc:
+            logger.error("Error in EFetch: %s", exc)
+            return {}
+        
+        abstracts: Dict[str, str] = {}
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as parse_err:
+            logger.warning("Failed to parse EFetch XML: %s", parse_err)
+            return {}
+        
+        for article in root.findall(".//PubmedArticle"):
+            pmid_elem = article.find(".//PMID")
+            if pmid_elem is None or not pmid_elem.text:
+                continue
+            pmid = pmid_elem.text.strip()
+            abstract_texts = []
+            for abstract_node in article.findall(".//AbstractText"):
+                text = (abstract_node.text or "").strip()
+                label = abstract_node.attrib.get("Label")
+                if label:
+                    abstract_texts.append(f"{label}: {text}" if text else label)
+                else:
+                    abstract_texts.append(text)
+            abstract = " ".join(filter(None, abstract_texts)).strip()
+            if abstract:
+                abstracts[pmid] = abstract
+        
+        return abstracts
     
     def _format_result(self, article: dict) -> str:
         """
@@ -254,13 +304,26 @@ class PubMedSearchTool(BaseTool):
         if not pmids:
             return f"No articles found for query: {query}"
         
+        # Limit to configured max results for downstream calls
+        top_pmids = pmids[: self.max_results]
+        
         # Step 2: Get summaries for the found articles
-        summaries = self._esummary(pmids[:self.max_results])
+        summaries = self._esummary(top_pmids)
         
         if not summaries:
-            return f"Found {len(pmids)} articles but could not retrieve summaries."
+            return (
+                f"Found {len(pmids)} article(s) on PubMed but could not retrieve summaries. "
+                "Please check server logs for details."
+            )
         
-        # Step 3: Format results
+        # Step 3: Fetch abstracts (ESummary doesn't include them)
+        abstracts = self._efetch_abstracts([summary.get("uid", "") for summary in summaries if summary.get("uid")])
+        for summary in summaries:
+            uid = summary.get("uid")
+            if uid and uid in abstracts:
+                summary["abstract"] = abstracts[uid]
+        
+        # Step 4: Format results
         formatted_results = []
         formatted_results.append(f"Found {len(summaries)} article(s) for query: {query}\n")
         
