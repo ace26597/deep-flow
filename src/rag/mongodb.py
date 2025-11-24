@@ -4,7 +4,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import AzureOpenAIEmbeddings, OpenAIEmbeddings
 from openai import OpenAI
 from pymongo import MongoClient
 
@@ -52,10 +52,39 @@ class MongoDBRetriever(Retriever):
         kwargs = {
             "api_key": self.embedding_api_key,
             "model": self.embedding_model_name,
-            "base_url": self.embedding_base_url,
             # "dimensions": 1536, # Optional, depends on model
         }
-        self.embedding_model = OpenAIEmbeddings(**kwargs)
+        provider = (self.embedding_provider or "openai").lower()
+        if provider == "azure":
+            azure_kwargs: Dict[str, Any] = {
+                "model": self.embedding_model_name,
+            }
+            # Prefer explicit Azure-specific settings, but fall back to the generic embedding env vars.
+            azure_kwargs["api_key"] = (
+                self.embedding_api_key or get_str_env("AZURE_OPENAI_API_KEY")
+            )
+
+            azure_endpoint = self.embedding_base_url or get_str_env(
+                "AZURE_OPENAI_ENDPOINT"
+            )
+            if azure_endpoint:
+                azure_kwargs["azure_endpoint"] = azure_endpoint
+
+            azure_api_version = get_str_env("AZURE_OPENAI_API_VERSION")
+            if azure_api_version:
+                azure_kwargs["api_version"] = azure_api_version
+
+            azure_deployment = get_str_env("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+            if azure_deployment:
+                azure_kwargs["azure_deployment"] = azure_deployment
+
+            self.embedding_model = AzureOpenAIEmbeddings(**azure_kwargs)
+            logger.info("Initialized Azure OpenAI embeddings for MongoDB retriever.")
+        else:
+            if self.embedding_base_url:
+                kwargs["base_url"] = self.embedding_base_url
+            self.embedding_model = OpenAIEmbeddings(**kwargs)
+            logger.info("Initialized OpenAI embeddings for MongoDB retriever.")
 
     def _connect(self) -> None:
         """Connect to MongoDB."""
