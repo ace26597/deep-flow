@@ -33,10 +33,10 @@ class MongoDBRetriever(Retriever):
         self.content_field = self.config.mongodb_content_field or "text"
 
         # Embedding configuration (reusing Milvus env vars for now or defaults)
-        self.embedding_model_name = get_str_env("MILVUS_EMBEDDING_MODEL", "text-embedding-3-large")
-        self.embedding_api_key = get_str_env("MILVUS_EMBEDDING_API_KEY") or None
-        self.embedding_base_url = get_str_env("MILVUS_EMBEDDING_BASE_URL") or None
-        self.embedding_provider = get_str_env("MILVUS_EMBEDDING_PROVIDER", "openai")
+        self.embedding_model_name = get_str_env("AZURE_EMBEDDING_MODEL", "text-embedding-3-large")
+        self.embedding_api_key = get_str_env("AZURE_OPENAI_API_KEY") or None
+        self.embedding_base_url = get_str_env("AZURE_OPENAI_ENDPOINT") or None
+        self.embedding_provider = get_str_env("AZURE_EMBEDDING_PROVIDER", "azure")
         
         # self._init_embedding_model() # Lazy init
         self.client: Optional[MongoClient] = None
