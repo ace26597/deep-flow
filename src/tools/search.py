@@ -12,17 +12,16 @@ from langchain_community.tools import (
     WikipediaQueryRun,
 )
 from langchain_community.tools.arxiv import ArxivQueryRun
-from langchain_community.tools.pubmed.tool import PubmedQueryRun
 from langchain_community.utilities import (
     ArxivAPIWrapper,
     BraveSearchWrapper,
-    PubMedAPIWrapper,
     SearxSearchWrapper,
     WikipediaAPIWrapper,
 )
 
 from src.config import SELECTED_SEARCH_ENGINE, SearchEngine, load_yaml_config
 from src.tools.decorators import create_logged_tool
+from src.tools.pubmed_tool import PubMedSearchTool
 from src.tools.tavily_search.tavily_search_results_with_images import (
     TavilySearchWithImages,
 )
@@ -34,7 +33,7 @@ LoggedTavilySearch = create_logged_tool(TavilySearchWithImages)
 LoggedDuckDuckGoSearch = create_logged_tool(DuckDuckGoSearchResults)
 LoggedBraveSearch = create_logged_tool(BraveSearch)
 LoggedArxivSearch = create_logged_tool(ArxivQueryRun)
-LoggedPubmedSearch = create_logged_tool(PubmedQueryRun)
+LoggedPubmedSearch = create_logged_tool(PubMedSearchTool)
 LoggedSearxSearch = create_logged_tool(SearxSearchRun)
 LoggedWikipediaSearch = create_logged_tool(WikipediaQueryRun)
 
@@ -125,10 +124,9 @@ def get_web_search_tool(max_search_results: int):
     elif SELECTED_SEARCH_ENGINE == SearchEngine.PUBMED.value:
         return LoggedPubmedSearch(
             name="web_search",
-            api_wrapper=PubMedAPIWrapper(
-                top_k_results=max_search_results,
-                email=search_config.get("email", "your_email@example.com"),
-            ),
+            max_results=max_search_results,
+            email=search_config.get("email") or os.getenv("PUBMED_EMAIL"),
+            api_key=os.getenv("NCBI_API_KEY"),
         )
     else:
         raise ValueError(f"Unsupported search engine: {SELECTED_SEARCH_ENGINE}")

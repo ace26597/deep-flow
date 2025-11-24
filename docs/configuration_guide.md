@@ -254,6 +254,50 @@ SEARCH_ENGINE:
 ```
 That's meaning that the search results will be filtered based on the minimum relevance score threshold and truncated to the maximum length limit for each search result content.
 
+### PubMed Data Source Configuration
+
+DeerFlow supports PubMed as a data source for biomedical literature searches. The implementation uses NCBI's E-utilities API directly for better control and performance.
+
+#### Environment Variables
+
+To use PubMed data source, set the following environment variables in your `.env` file:
+
+```bash
+# Required: Email address for NCBI API (required for high-volume usage)
+# NCBI recommends providing an email address to identify your application
+PUBMED_EMAIL=your_email@example.com
+
+# Optional: NCBI API key for higher rate limits
+# Without API key: 3 requests per second
+# With API key: 10 requests per second (recommended for production)
+# Get your API key from: https://www.ncbi.nlm.nih.gov/account/settings/
+NCBI_API_KEY=your_ncbi_api_key_here
+```
+
+#### Getting an NCBI API Key
+
+1. Create an NCBI account at https://www.ncbi.nlm.nih.gov/account/
+2. Go to Account Settings → API Key Management
+3. Generate a new API key
+4. Add it to your `.env` file as `NCBI_API_KEY`
+
+**Note:** While the API key is optional, it's highly recommended for production use as it:
+- Increases rate limits from 3 to 10 requests per second
+- Provides better tracking and support from NCBI
+- Helps avoid rate limiting issues during intensive searches
+
+#### Using PubMed in Data Sources
+
+PubMed can be selected as a data source in the DeerFlow UI or configured programmatically. The tool will:
+- Search PubMed using ESearch utility
+- Retrieve article summaries using ESummary utility
+- Return formatted results with titles, authors, journals, abstracts, and PMIDs
+
+For more information about NCBI E-utilities, see:
+- [E-utilities Documentation](https://www.ncbi.nlm.nih.gov/books/NBK25501/)
+- [NCBI API Overview](https://www.ncbi.nlm.nih.gov/home/develop/api/)
+- [PMC Developer Tools](https://pmc.ncbi.nlm.nih.gov/tools/developers/)
+
 ## RAG (Retrieval-Augmented Generation) Configuration
 
 DeerFlow supports multiple RAG providers for document retrieval. Configure the RAG provider by setting environment variables.

@@ -271,21 +271,16 @@ def background_investigation_node(state: State, config: RunnableConfig):
                 ])
 
             elif source == SearchEngine.PUBMED.value:
-                # PubMed tool returns a string usually
-                pubmed_tool = get_web_search_tool(configurable.max_search_results)
-                # Force PubMed tool if get_web_search_tool doesn't return it (it depends on global config)
-                # So we should instantiate it directly if possible or rely on a helper that takes the engine name
-                # For now, let's instantiate directly to be safe if the global config isn't set to pubmed
-                from langchain_community.tools.pubmed.tool import PubmedQueryRun
-                from langchain_community.utilities import PubMedAPIWrapper
-                from src.tools.search import LoggedPubmedSearch
+                from src.tools.pubmed_tool import PubMedSearchTool
+                from src.tools.decorators import create_logged_tool
+                import os
                 
+                LoggedPubmedSearch = create_logged_tool(PubMedSearchTool)
                 tool = LoggedPubmedSearch(
                     name="web_search",
-                    api_wrapper=PubMedAPIWrapper(
-                        top_k_results=configurable.max_search_results,
-                        email="your_email@example.com", # Should be from config
-                    ),
+                    max_results=configurable.max_search_results,
+                    email=os.getenv("PUBMED_EMAIL"),
+                    api_key=os.getenv("NCBI_API_KEY"),
                 )
                 res = tool.invoke(query)
                 all_results.append(f"## [PubMed] Results\n\n{res}")
@@ -1185,18 +1180,19 @@ async def researcher_node(
     # 3. PubMed
     if "pubmed" in data_sources:
         try:
-            from langchain_community.utilities import PubMedAPIWrapper
-            from src.tools.search import LoggedPubmedSearch
+            from src.tools.pubmed_tool import PubMedSearchTool
+            from src.tools.decorators import create_logged_tool
+            import os
             
+            LoggedPubmedSearch = create_logged_tool(PubMedSearchTool)
             tools.append(LoggedPubmedSearch(
                 name="pubmed_search",
-                api_wrapper=PubMedAPIWrapper(
-                    top_k_results=configurable.max_search_results,
-                    email="your_email@example.com", 
-                ),
+                max_results=configurable.max_search_results,
+                email=os.getenv("PUBMED_EMAIL"),
+                api_key=os.getenv("NCBI_API_KEY"),
             ))
-        except ImportError:
-            logger.error("Failed to import PubMed tools")
+        except ImportError as e:
+            logger.error(f"Failed to import PubMed tools: {e}")
 
     # 4. Arxiv
     if "arxiv" in data_sources:
