@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from functools import partial
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -176,6 +176,43 @@ def validate_and_fix_plan(plan: dict, enforce_web_search: bool = False) -> dict:
                 }
             ]
 
+    return plan
+
+
+def _normalize_plan_structure(plan_data: Any) -> Any:
+    """
+    Handle cases where the planner response is wrapped in an AI message dict
+    (e.g., {"content": "{...plan json...}", ...}).
+    """
+    if isinstance(plan_data, dict):
+        content = plan_data.get("content")
+        if isinstance(content, str):
+            stripped = content.strip()
+            if stripped.startswith("{") or stripped.startswith("["):
+                try:
+                    inner = json.loads(repair_json_output(content))
+                    return _normalize_plan_structure(inner)
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse nested plan content; using raw content.")
+        return plan_data
+    return plan_data
+
+
+def _ensure_plan_defaults(plan: dict, state: State) -> dict:
+    """
+    Populate required plan fields if the planner omitted them.
+    """
+    if not isinstance(plan, dict):
+        return plan
+
+    if not plan.get("locale"):
+        plan["locale"] = state.get("locale", "en-US")
+    if "has_enough_context" not in plan:
+        plan["has_enough_context"] = False
+    plan.setdefault("thought", "")
+    plan.setdefault("steps", plan.get("steps") or [])
+    if not plan.get("title"):
+        plan["title"] = state.get("research_topic", "Untitled Research Plan")
     return plan
 
 
@@ -395,6 +432,7 @@ def planner_node(
 
     try:
         curr_plan = json.loads(repair_json_output(full_response))
+        curr_plan = _normalize_plan_structure(curr_plan)
     except json.JSONDecodeError:
         logger.warning("Planner response is not a valid JSON")
         if plan_iterations > 0:
@@ -423,10 +461,15 @@ def planner_node(
             },
             goto="reporter",
         )
+    pending_plan_payload = (
+        json.dumps(curr_plan, ensure_ascii=False)
+        if isinstance(curr_plan, (dict, list))
+        else full_response
+    )
     return Command(
         update={
             "messages": [AIMessage(content=full_response, name="planner")],
-            "current_plan": full_response,
+            "current_plan": pending_plan_payload,
             **preserve_state_meta_fields(state),
         },
         goto="human_feedback",
@@ -483,6 +526,7 @@ def human_feedback_node(
         plan_iterations += 1
         # parse the plan
         new_plan = json.loads(current_plan)
+        new_plan = _normalize_plan_structure(new_plan)
         # Validate and fix plan to ensure web search requirements are met
         configurable = Configuration.from_runnable_config(config)
         new_plan = validate_and_fix_plan(new_plan, configurable.enforce_web_search)
@@ -500,6 +544,15 @@ def human_feedback_node(
             )
 
     # Build update dict with safe locale handling
+    if not isinstance(new_plan, dict):
+        logger.error("Accepted plan could not be converted into a valid dict.")
+        return Command(
+            update=preserve_state_meta_fields(state),
+            goto="__end__"
+        )
+
+    new_plan = _ensure_plan_defaults(new_plan, state)
+
     update_dict = {
         "current_plan": Plan.model_validate(new_plan),
         "plan_iterations": plan_iterations,
